@@ -54,23 +54,35 @@ def get_polymarket_markets():
         data = r.json()
         markets = []
         for event in data.get("events", []):
+            title = event.get("title", "")
+            # Only get main match result markets (not props, corners, etc.)
+            if "vs." not in title or any(x in title.lower() for x in ["corner", "prop", "score", "half", "first team", "more market", "arch"]):
+                continue
+            # Get nested markets
             for market in event.get("markets", []):
-                question = market.get("question", "")
+                m_title = market.get("title", "")
+                outcomes = market.get("outcomes", "[]")
                 prices = market.get("outcomePrices", "[]")
+                if isinstance(outcomes, str):
+                    outcomes = json.loads(outcomes)
                 if isinstance(prices, str):
-                    try:
-                        prices = json.loads(prices)
-                    except:
-                        continue
-                if prices and 0.01 <= float(prices[0]) <= 0.99:
-                    markets.append({
-                        "question": question,
-                        "id": market.get("id", ""),
-                        "outcomePrices": prices,
-                    })
+                    prices = json.loads(prices)
+                if not prices:
+                    continue
+                for i, outcome in enumerate(outcomes):
+                    price = float(prices[i]) if i < len(prices) else 0
+                    if 0.05 <= price <= 0.95:
+                        markets.append({
+                            "question": f"{title} - {outcome}",
+                            "team": outcome.lower(),
+                            "id": market.get("id", ""),
+                            "outcomePrices": prices,
+                            "outcome_index": i,
+                            "price": price,
+                        })
         print(f"Found {len(markets)} Polymarket match markets")
         for m in markets[:5]:
-            print(f"Poly: {m['question']}")
+            print(f"Poly: {m['question']} @ {m['price']}")
         return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
@@ -81,18 +93,10 @@ def match_markets(kalshi_markets, poly_markets):
     for km in kalshi_markets:
         subtitle = km.get("subtitle", "").lower().replace("reg time:", "").strip()
         for pm in poly_markets:
-            question = pm.get("question", pm.get("title", "")).lower()
-            if subtitle and len(subtitle) > 3 and subtitle in question:
-                # Only match if Polymarket price is reasonable (between 1% and 99%)
-                prices = pm.get("outcomePrices", pm.get("prices", "[]"))
-                if isinstance(prices, str):
-                    try:
-                        prices = json.loads(prices)
-                    except:
-                        continue
-                if prices and 0.01 <= float(prices[0]) <= 0.99:
-                    pairs.append((km, pm))
-                    print(f"Matched: {km['title']} [{subtitle}] <-> {question}")
+            team = pm.get("team", "").lower()
+            if subtitle and len(subtitle) > 3 and subtitle == team:
+                pairs.append((km, pm))
+                print(f"Matched: {km['title']} [{subtitle}] <-> {pm['question']}")
     print(f"Total valid pairs: {len(pairs)}")
     return pairs
 
@@ -102,11 +106,8 @@ def find_arb(kalshi_markets, poly_markets):
     for km, pm in pairs:
         try:
             k_price = float(km.get("yes_ask", 0))
-            prices = pm.get("outcomePrices", pm.get("prices", "[]"))
-            if isinstance(prices, str):
-                prices = json.loads(prices)
-            p_price = float(prices[0]) if prices else 0
-            if k_price <= 0 or p_price <= 0 or k_price > 0.99 or p_price > 0.99:
+            p_price = float(pm.get("price", 0))
+            if k_price <= 0 or p_price <= 0:
                 continue
             k_odds = round(1 / k_price, 3)
             p_odds = round(1 / p_price, 3)
@@ -114,7 +115,7 @@ def find_arb(kalshi_markets, poly_markets):
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
             print(f"Edge: {km['subtitle']} | K:{k_price} P:{p_price} | {round(edge*100,1)}%")
-            if MIN_EDGE <= edge <= 2.0:  # Cap at 200% to filter fake matches
+            if MIN_EDGE <= edge <= 1.0:
                 opportunities.append({
                     "title": km["title"],
                     "subtitle": km["subtitle"],
