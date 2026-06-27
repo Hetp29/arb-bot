@@ -1,6 +1,7 @@
 import time
 import requests
 import os
+import json
 from datetime import datetime
 
 # ── CONFIG ────────────────────────────────────────────────
@@ -37,7 +38,6 @@ def get_kalshi_markets():
         }
         r = requests.get(url, headers=headers, timeout=5)
         print(f"Kalshi status: {r.status_code}")
-        print(f"Kalshi response: {r.text[:300]}")
         data = r.json()
         markets = []
         for market in data.get("markets", []):
@@ -48,6 +48,8 @@ def get_kalshi_markets():
                 "no_ask": market.get("no_ask", 0),
             })
         print(f"Found {len(markets)} Kalshi markets")
+        for m in markets[:3]:
+            print(f"Kalshi sample: {m['title']} | yes_ask: {m['yes_ask']}")
         return markets
     except Exception as e:
         print(f"Kalshi error: {e}")
@@ -58,7 +60,11 @@ def get_polymarket_markets():
     try:
         url = "https://gamma-api.polymarket.com/markets?tag=soccer&active=true&closed=false&limit=100"
         r = requests.get(url, timeout=5)
-        return r.json()
+        data = r.json()
+        print(f"Found {len(data)} Polymarket markets")
+        for m in data[:3]:
+            print(f"Poly sample: {m.get('question', '')}")
+        return data
     except Exception as e:
         print(f"Polymarket error: {e}")
         return []
@@ -73,6 +79,8 @@ def match_markets(kalshi_markets, poly_markets):
             overlap = km_words & pm_words
             if len(overlap) >= 2:
                 pairs.append((km, pm))
+                print(f"Matched: {km['title']} <-> {pm.get('question', '')}")
+    print(f"Total pairs matched: {len(pairs)}")
     return pairs
 
 # ── ARB DETECTION ─────────────────────────────────────────
@@ -85,7 +93,6 @@ def find_arb(kalshi_markets, poly_markets):
             k_price = float(km.get("yes_ask", 0))
             prices = pm.get("outcomePrices", "[]")
             if isinstance(prices, str):
-                import json
                 prices = json.loads(prices)
             p_price = float(prices[0]) if prices else 0
 
@@ -98,6 +105,8 @@ def find_arb(kalshi_markets, poly_markets):
             best_odds = max(k_odds, p_odds)
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
+
+            print(f"Checking: {km['title']} | K:{k_odds} P:{p_odds} Edge:{round(edge*100,1)}%")
 
             if edge >= MIN_EDGE:
                 opportunities.append({
@@ -131,6 +140,7 @@ def place_kalshi_order(ticker, side, amount):
             "count": int(amount * 100),
         }
         r = requests.post(url, headers=headers, json=payload, timeout=5)
+        print(f"Kalshi order response: {r.text[:200]}")
         return r.json()
     except Exception as e:
         print(f"Kalshi order error: {e}")
@@ -152,6 +162,7 @@ def place_poly_order(market_id, side, amount):
             "orderType": "MARKET",
         }
         r = requests.post(url, headers=headers, json=payload, timeout=5)
+        print(f"Poly order response: {r.text[:200]}")
         return r.json()
     except Exception as e:
         print(f"Polymarket order error: {e}")
@@ -216,4 +227,4 @@ def main():
         time.sleep(SCAN_INTERVAL)
 
 if __name__ == "__main__":
-    main()
+    main()git add .
