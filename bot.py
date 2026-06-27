@@ -49,38 +49,45 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
+        # Step 1: Get all World Cup event slugs
         url = "https://gamma-api.polymarket.com/events?series_slug=soccer-fifwc&active=true&limit=50"
-        r = requests.get(url, timeout=5)
-        data = r.json()
+        r = requests.get(url, timeout=10)
+        events_list = r.json()
+        
         markets = []
-        for event in data:
+        for event in events_list:
+            slug = event.get("slug", "")
             title = event.get("title", "")
             if "vs." not in title:
                 continue
-            for market in event.get("markets", []):
-                question = market.get("question", "")
-                outcomes = market.get("outcomes", "[]")
+            
+            # Step 2: Fetch each event individually
+            er = requests.get(f"https://gamma-api.polymarket.com/events?slug={slug}", timeout=5)
+            event_data = er.json()
+            if not event_data:
+                continue
+            
+            for market in event_data[0].get("markets", []):
                 prices = market.get("outcomePrices", "[]")
-                if isinstance(outcomes, str):
-                    outcomes = json.loads(outcomes)
                 if isinstance(prices, str):
                     prices = json.loads(prices)
-                if not prices or not outcomes:
+                if not prices:
                     continue
-                # Get YES price (index 0)
                 price = float(prices[0])
-                if 0.05 <= price <= 0.95:
-                    # Extract team name from question e.g. "Will Morocco win on..."
-                    team = question.lower().replace("will ", "").replace(" win on", "").split(" win")[0].strip()
-                    markets.append({
-                        "question": question,
-                        "team": team,
-                        "id": market.get("id", ""),
-                        "price": price,
-                    })
+                team = market.get("groupItemTitle", "").lower().strip()
+                # Skip draw and non-team markets
+                if not team or "draw" in team or price < 0.05 or price > 0.95:
+                    continue
+                markets.append({
+                    "question": market.get("question", ""),
+                    "team": team,
+                    "id": market.get("id", ""),
+                    "price": price,
+                })
+
         print(f"Found {len(markets)} Polymarket match markets")
         for m in markets[:5]:
-            print(f"Poly: {m['question']} | team: {m['team']} @ {m['price']}")
+            print(f"Poly: {m['team']} @ {m['price']}")
         return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
