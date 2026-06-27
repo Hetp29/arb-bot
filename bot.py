@@ -29,7 +29,7 @@ def send_telegram(msg):
 # ── KALSHI ────────────────────────────────────────────────
 def get_kalshi_markets():
     try:
-        url = "https://api.kalshi.com/trade-api/v2/events?status=open&series_ticker=KXWORLDSOCCER"
+        url = "https://trading-api.kalshi.com/trade-api/v2/events?status=open&series_ticker=KXWORLDSOCCER"
         headers = {"Authorization": f"Bearer {KALSHI_API_KEY}"}
         r = requests.get(url, headers=headers, timeout=5)
         data = r.json()
@@ -113,7 +113,7 @@ def find_arb(kalshi_markets, poly_markets):
 # ── PLACE KALSHI ORDER ────────────────────────────────────
 def place_kalshi_order(ticker, side, amount):
     try:
-        url = "https://api.kalshi.com/trade-api/v2/portfolio/orders"
+        url = "https://trading-api.kalshi.com/trade-api/v2/portfolio/orders"
         headers = {
             "Authorization": f"Bearer {KALSHI_API_KEY}",
             "Content-Type": "application/json"
