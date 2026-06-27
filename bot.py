@@ -49,40 +49,38 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        url = "https://gamma-api.polymarket.com/series/11433"
+        url = "https://gamma-api.polymarket.com/events?series_slug=soccer-fifwc&active=true&limit=50"
         r = requests.get(url, timeout=5)
         data = r.json()
         markets = []
-        for event in data.get("events", []):
+        for event in data:
             title = event.get("title", "")
-            # Only get main match result markets (not props, corners, etc.)
-            if "vs." not in title or any(x in title.lower() for x in ["corner", "prop", "score", "half", "first team", "more market", "arch"]):
+            if "vs." not in title:
                 continue
-            # Get nested markets
             for market in event.get("markets", []):
-                m_title = market.get("title", "")
+                question = market.get("question", "")
                 outcomes = market.get("outcomes", "[]")
                 prices = market.get("outcomePrices", "[]")
                 if isinstance(outcomes, str):
                     outcomes = json.loads(outcomes)
                 if isinstance(prices, str):
                     prices = json.loads(prices)
-                if not prices:
+                if not prices or not outcomes:
                     continue
-                for i, outcome in enumerate(outcomes):
-                    price = float(prices[i]) if i < len(prices) else 0
-                    if 0.05 <= price <= 0.95:
-                        markets.append({
-                            "question": f"{title} - {outcome}",
-                            "team": outcome.lower(),
-                            "id": market.get("id", ""),
-                            "outcomePrices": prices,
-                            "outcome_index": i,
-                            "price": price,
-                        })
+                # Get YES price (index 0)
+                price = float(prices[0])
+                if 0.05 <= price <= 0.95:
+                    # Extract team name from question e.g. "Will Morocco win on..."
+                    team = question.lower().replace("will ", "").replace(" win on", "").split(" win")[0].strip()
+                    markets.append({
+                        "question": question,
+                        "team": team,
+                        "id": market.get("id", ""),
+                        "price": price,
+                    })
         print(f"Found {len(markets)} Polymarket match markets")
         for m in markets[:5]:
-            print(f"Poly: {m['question']} @ {m['price']}")
+            print(f"Poly: {m['question']} | team: {m['team']} @ {m['price']}")
         return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
