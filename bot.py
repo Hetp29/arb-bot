@@ -29,7 +29,7 @@ def send_telegram(msg):
 # ── KALSHI ────────────────────────────────────────────────
 def get_kalshi_markets():
     try:
-        url = "https://api.elections.kalshi.com/trade-api/v2/markets?status=active&series_ticker=KXWCGAME&limit=100"
+        url = "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXWCGAME&limit=100"
         headers = {
             "Authorization": f"Bearer {KALSHI_API_KEY}",
             "Content-Type": "application/json",
@@ -37,14 +37,15 @@ def get_kalshi_markets():
         }
         r = requests.get(url, headers=headers, timeout=5)
         print(f"Kalshi status: {r.status_code}")
+        print(f"Kalshi response: {r.text[:300]}")
         data = r.json()
         markets = []
         for market in data.get("markets", []):
             markets.append({
                 "title": market.get("title", ""),
                 "ticker": market.get("ticker", ""),
-                "yes_ask": market.get("yes_ask_price", 0),
-                "no_ask": market.get("no_ask_price", 0),
+                "yes_ask": market.get("yes_ask", 0),
+                "no_ask": market.get("no_ask", 0),
             })
         print(f"Found {len(markets)} Kalshi markets")
         return markets
