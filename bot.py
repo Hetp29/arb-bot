@@ -174,11 +174,13 @@ def find_arb(kalshi_markets, poly_markets):
             edge = (best_odds - worst_odds) / worst_odds
             print(f"Edge: {km['subtitle']} | K:{k_price} P:{p_price} | {round(edge*100,1)}%")
             if MIN_EDGE <= edge <= 1.0:
+                print(f"Poly ID: {pm.get('id')} | slug: {pm.get('slug')}")
                 opportunities.append({
                     "title": km["title"],
                     "subtitle": km["subtitle"],
                     "kalshi_ticker": km["ticker"],
                     "poly_id": pm.get("id", ""),
+"poly_id_debug": print(f"Poly ID: {pm.get('id')} slug: {pm.get('slug')}") or pm.get("id", ""),
                     "poly_slug": pm.get("slug", ""),
                     "kalshi_odds": k_odds,
                     "poly_odds": p_odds,
@@ -195,7 +197,7 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount, price):
     try:
-        path = "/trade-api/v2/portfolio/events/orders"
+        path = "/trade-api/v2/portfolio/orders"
         headers = get_kalshi_headers("POST", path)
         count = max(1, int(amount / price))
         payload = {
