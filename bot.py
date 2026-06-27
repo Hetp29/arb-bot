@@ -131,6 +131,7 @@ def get_polymarket_markets():
                 team = market.get("groupItemTitle", "").lower().strip()
                 if not team or "draw" in team or price < 0.05 or price > 0.95:
                     continue
+                print(f"Poly slug: {market.get('slug', '')} | team: {team}")
                 markets.append({
                     "question": question,
                     "team": team,
@@ -202,7 +203,7 @@ def place_kalshi_order(ticker, side, amount, price):
             "ticker": ticker,
             "client_order_id": f"arb-{int(time.time())}",
             "side": "bid" if side == "yes" else "ask",
-            "count": count,
+            "count": str(count),
             "type": "market",
             "time_in_force": "fill_or_kill",
             "self_trade_prevention_type": "taker_at_cross",
@@ -263,7 +264,7 @@ def execute_trade(opp):
         p_result = place_poly_order(opp["poly_slug"], "yes", buy_bet)
         k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
-    if not k_result or not p_result:
+    if not k_result or "error" in str(k_result) or not p_result or "code" in str(p_result):
         print("⚠️ Orders failed - not counting P&L")
         return
 
