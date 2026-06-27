@@ -49,15 +49,16 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        # Use Polymarket US API for match markets
-        url = "https://api.polymarket.us/markets?sports=soccer&limit=100&active=true"
-        headers = {"Authorization": f"Bearer {POLYMARKET_API_KEY}"}
-        r = requests.get(url, headers=headers, timeout=5)
+        # Use gamma API with sports tag for individual match markets
+        url = "https://gamma-api.polymarket.com/markets?sports=true&active=true&closed=false&limit=100&tag=soccer"
+        r = requests.get(url, timeout=5)
+        print(f"Poly status: {r.status_code}")
+        print(f"Poly raw: {r.text[:200]}")
         data = r.json()
         markets = data if isinstance(data, list) else data.get("markets", [])
-        print(f"Found {len(markets)} Polymarket US markets")
+        print(f"Found {len(markets)} Polymarket markets")
         for m in markets[:5]:
-            print(f"Poly: {m.get('question', m.get('title', ''))}")
+            print(f"Poly: {m.get('question', '')}")
         return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
