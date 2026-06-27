@@ -1,4 +1,5 @@
 import time
+from wsgiref import headers
 import requests
 import os
 import json
@@ -107,8 +108,8 @@ def get_polymarket_markets():
         try:
             path = "/v1/markets"
             headers = get_poly_headers("GET", path)
-            r2 = requests.get("https://api.polymarket.us/v1/markets?limit=10&category=sports&q=colombia", headers=headers, timeout=5)
-            print(f"Poly US markets: {r2.text[:500]}")
+            r2 = requests.get("https://api.polymarket.us/v1/markets?limit=10&q=colombia+portugal+2026", headers=headers, timeout=5)
+            print(f"Poly US markets: {r2.text[:1000]}")
         except Exception as e:
             print(f"Poly US debug error: {e}")
 
@@ -274,16 +275,23 @@ def execute_trade(opp):
     buy_bet = round(MAX_BET * 0.55, 2)
     fade_bet = round(MAX_BET * 0.45, 2)
 
+    # Always do Polymarket FIRST - never place Kalshi if Poly fails
     if opp["buy_on"] == "Kalshi":
-        k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet, opp["k_price"])
         p_result = place_poly_order(opp["poly_slug"], "no", fade_bet)
+        if not p_result:
+            print("⚠️ Polymarket failed - skipping Kalshi")
+            return
+        k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet, opp["k_price"])
     else:
         p_result = place_poly_order(opp["poly_slug"], "yes", buy_bet)
+        if not p_result:
+            print("⚠️ Polymarket failed - skipping Kalshi")
+            return
         k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
-    if not k_result or not p_result:
-        print("⚠️ Orders failed - not counting P&L")
-        return
+        if not k_result or not p_result:
+            print("⚠️ Orders failed - not counting P&L")
+            return
 
     estimated_profit = round(buy_bet * opp["kalshi_odds"] - MAX_BET, 2)
     session_pnl = round(session_pnl + estimated_profit, 2)
