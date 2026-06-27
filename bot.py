@@ -32,15 +32,19 @@ def get_kalshi_markets():
         data = r.json()
         markets = []
         for market in data.get("markets", []):
-            # Print raw market to see all fields
-            print(f"RAW: {list(market.keys())} | yes_ask={market.get('yes_ask')} | yes_ask_price={market.get('yes_ask_price')} | last_price={market.get('last_price')}")
-            markets.append({
-                "title": market.get("title", ""),
-                "ticker": market.get("ticker", ""),
-                "yes_ask": market.get("yes_ask_price") or market.get("yes_ask") or market.get("last_price") or 0,
-                "no_ask": market.get("no_ask_price") or market.get("no_ask") or 0,
-            })
-        print(f"Found {len(markets)} Kalshi markets")
+            yes_ask = float(market.get("yes_ask_dollars", 0) or 0)
+            no_ask = float(market.get("no_ask_dollars", 0) or 0)
+            if yes_ask > 0:
+                markets.append({
+                    "title": market.get("title", ""),
+                    "subtitle": market.get("yes_sub_title", ""),
+                    "ticker": market.get("ticker", ""),
+                    "yes_ask": yes_ask,
+                    "no_ask": no_ask,
+                })
+        print(f"Found {len(markets)} Kalshi markets with prices")
+        for m in markets[:3]:
+            print(f"Kalshi: {m['title']} | {m['subtitle']} | yes_ask: {m['yes_ask']}")
         return markets
     except Exception as e:
         print(f"Kalshi error: {e}")
@@ -48,13 +52,22 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        # Use FIFA World Cup specific tag instead of generic soccer
-        url = "https://gamma-api.polymarket.com/markets?tag=fifa-world-cup&active=true&closed=false&limit=100"
+        url = "https://gamma-api.polymarket.com/markets?tag=fifa-world-cup-2026&active=true&closed=false&limit=100"
         r = requests.get(url, timeout=5)
         data = r.json()
+        if not isinstance(data, list):
+            # fallback
+            url2 = "https://gamma-api.polymarket.com/events?tag=fifa-world-cup-2026&active=true&limit=50"
+            r2 = requests.get(url2, timeout=5)
+            data2 = r2.json()
+            markets = []
+            for event in data2 if isinstance(data2, list) else []:
+                for m in event.get("markets", []):
+                    markets.append(m)
+            data = markets
         print(f"Found {len(data)} Polymarket markets")
         for m in data[:5]:
-            print(f"Poly sample: {m.get('question', '')}")
+            print(f"Poly: {m.get('question', '')}")
         return data
     except Exception as e:
         print(f"Polymarket error: {e}")
@@ -63,14 +76,14 @@ def get_polymarket_markets():
 def match_markets(kalshi_markets, poly_markets):
     pairs = []
     for km in kalshi_markets:
-        km_words = set(w.lower() for w in km["title"].split() if len(w) > 3)
+        # Extract team names from Kalshi subtitle e.g. "Reg Time: Argentina"
+        subtitle = km.get("subtitle", "").lower().replace("reg time:", "").strip()
         for pm in poly_markets:
-            pm_words = set(w.lower() for w in pm.get("question", "").split() if len(w) > 3)
-            overlap = km_words & pm_words
-            if len(overlap) >= 2:
+            question = pm.get("question", "").lower()
+            if subtitle and subtitle in question:
                 pairs.append((km, pm))
-                print(f"Matched: {km['title']} <-> {pm.get('question', '')}")
-    print(f"Total pairs matched: {len(pairs)}")
+                print(f"Matched: {km['title']} [{subtitle}] <-> {pm.get('question', '')}")
+    print(f"Total pairs: {len(pairs)}")
     return pairs
 
 def find_arb(kalshi_markets, poly_markets):
@@ -90,11 +103,20 @@ def find_arb(kalshi_markets, poly_markets):
             best_odds = max(k_odds, p_odds)
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
-            print(f"Checking: {km['title']} | K:{k_odds} P:{p_odds} Edge:{round(edge*100,1)}%")
+            print(f"Edge check: {km['title']} | K:{k_odds} P:{p_odds} Edge:{round(edge*100,1)}%")
             if edge >= MIN_EDGE:
-                opportunities.append({"title": km["title"], "kalshi_ticker": km["ticker"], "poly_id": pm.get("id", ""), "kalshi_odds": k_odds, "poly_odds": p_odds, "edge": round(edge * 100, 2), "buy_on": "Kalshi" if k_odds > p_odds else "Polymarket", "fade_on": "Polymarket" if k_odds > p_odds else "Kalshi"})
+                opportunities.append({
+                    "title": km["title"],
+                    "kalshi_ticker": km["ticker"],
+                    "poly_id": pm.get("id", ""),
+                    "kalshi_odds": k_odds,
+                    "poly_odds": p_odds,
+                    "edge": round(edge * 100, 2),
+                    "buy_on": "Kalshi" if k_odds > p_odds else "Polymarket",
+                    "fade_on": "Polymarket" if k_odds > p_odds else "Kalshi",
+                })
         except Exception as e:
-            print(f"Arb detection error: {e}")
+            print(f"Arb error: {e}")
             continue
     return sorted(opportunities, key=lambda x: x["edge"], reverse=True)
 
@@ -104,7 +126,7 @@ def place_kalshi_order(ticker, side, amount):
         headers = {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json"}
         payload = {"ticker": ticker, "side": side, "type": "market", "count": int(amount * 100)}
         r = requests.post(url, headers=headers, json=payload, timeout=5)
-        print(f"Kalshi order response: {r.text[:200]}")
+        print(f"Kalshi order: {r.text[:200]}")
         return r.json()
     except Exception as e:
         print(f"Kalshi order error: {e}")
@@ -116,10 +138,10 @@ def place_poly_order(market_id, side, amount):
         headers = {"Authorization": f"Bearer {POLYMARKET_API_KEY}", "Content-Type": "application/json"}
         payload = {"market": market_id, "side": side, "price": amount, "size": amount, "orderType": "MARKET"}
         r = requests.post(url, headers=headers, json=payload, timeout=5)
-        print(f"Poly order response: {r.text[:200]}")
+        print(f"Poly order: {r.text[:200]}")
         return r.json()
     except Exception as e:
-        print(f"Polymarket order error: {e}")
+        print(f"Poly order error: {e}")
         return None
 
 def execute_trade(opp):
@@ -151,7 +173,7 @@ def main():
         poly = get_polymarket_markets()
         opps = find_arb(kalshi, poly)
         if opps:
-            print(f"Found {len(opps)} opportunities! Best edge: {opps[0]['edge']}%")
+            print(f"Found {len(opps)} opps! Best: {opps[0]['edge']}%")
             execute_trade(opps[0])
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] No arb found")
