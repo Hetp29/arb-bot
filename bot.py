@@ -153,7 +153,8 @@ def find_arb(kalshi_markets, poly_markets):
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
             print(f"Edge: {km['subtitle']} | K:{k_price} P:{p_price} | {round(edge*100,1)}%")
-            if MIN_EDGE <= edge <= 1.0 and k_odds > p_odds:  # Only buy on Kalshi
+            if MIN_EDGE <= edge <= 1.0:  # Buy on whichever is cheaper
+
                 opportunities.append({
                     "title": km["title"],
                     "subtitle": km["subtitle"],
