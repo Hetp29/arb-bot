@@ -31,8 +31,10 @@ def get_kalshi_headers(method, path):
     try:
         timestamp = str(int(datetime.datetime.now().timestamp() * 1000))
         msg = timestamp + method.upper() + path
-        private_key_pem = KALSHI_API_SECRET.encode()
-        private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+        pem = KALSHI_API_SECRET.replace("\\n", "\n")
+        if "-----BEGIN" not in pem:
+            pem = f"-----BEGIN RSA PRIVATE KEY-----\n{pem}\n-----END RSA PRIVATE KEY-----"
+        private_key = serialization.load_pem_private_key(pem.encode(), password=None)
         signature = private_key.sign(
             msg.encode(),
             padding.PSS(
@@ -99,6 +101,10 @@ def get_polymarket_markets():
             if not event_data:
                 continue
             for market in event_data[0].get("markets", []):
+                question = market.get("question", "")
+                # Filter out halftime and non-winner markets
+                if any(x in question.lower() for x in ["halftime", "half", "leading", "first", "corner", "score"]):
+                    continue
                 prices = market.get("outcomePrices", "[]")
                 if isinstance(prices, str):
                     prices = json.loads(prices)
@@ -109,7 +115,7 @@ def get_polymarket_markets():
                 if not team or "draw" in team or price < 0.05 or price > 0.95:
                     continue
                 markets.append({
-                    "question": market.get("question", ""),
+                    "question": question,
                     "team": team,
                     "id": market.get("id", ""),
                     "price": price,
@@ -157,6 +163,8 @@ def find_arb(kalshi_markets, poly_markets):
                     "poly_id": pm.get("id", ""),
                     "kalshi_odds": k_odds,
                     "poly_odds": p_odds,
+                    "k_price": k_price,
+                    "p_price": p_price,
                     "edge": round(edge * 100, 2),
                     "buy_on": "Kalshi" if k_odds > p_odds else "Polymarket",
                     "fade_on": "Polymarket" if k_odds > p_odds else "Kalshi",
@@ -166,19 +174,21 @@ def find_arb(kalshi_markets, poly_markets):
             continue
     return sorted(opportunities, key=lambda x: x["edge"], reverse=True)
 
-def place_kalshi_order(ticker, side, amount):
+def place_kalshi_order(ticker, side, amount, price):
     try:
         path = "/trade-api/v2/portfolio/events/orders"
         headers = get_kalshi_headers("POST", path)
+        count = max(1, int(amount / price))
         payload = {
             "ticker": ticker,
             "client_order_id": f"arb-{int(time.time())}",
             "side": "bid" if side == "yes" else "ask",
-            "count": f"{int(amount * 100)}.00",
-            "price": "0.5000",
+            "count": count,
+            "type": "market",
             "time_in_force": "fill_or_kill",
             "self_trade_prevention_type": "taker_at_cross",
         }
+        print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f}")
         r = requests.post(
             f"https://api.elections.kalshi.com{path}",
             headers=headers,
@@ -225,11 +235,11 @@ def execute_trade(opp):
     fade_bet = round(MAX_BET * 0.45, 2)
 
     if opp["buy_on"] == "Kalshi":
-        k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet)
+        k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet, opp["k_price"])
         p_result = place_poly_order(opp["poly_id"], "no", fade_bet)
     else:
         p_result = place_poly_order(opp["poly_id"], "yes", buy_bet)
-        k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet)
+        k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
     if not k_result or not p_result:
         print("⚠️ Orders failed - not counting P&L")
