@@ -49,38 +49,49 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        url = "https://gamma-api.polymarket.com/events?series_slug=soccer-fifwc&active=true&limit=50"
+        # Only get active upcoming matches (not closed/finished ones)
+        url = "https://gamma-api.polymarket.com/events?series_slug=soccer-fifwc&active=true&closed=false&limit=10"
         r = requests.get(url, timeout=10)
-        print(f"Step1: status={r.status_code} events={len(r.json())}")
         events_list = r.json()
         
         markets = []
-        vs_count = 0
         for event in events_list:
             title = event.get("title", "")
             slug = event.get("slug", "")
-            if "vs." in title:
-                vs_count += 1
-                print(f"VS event: {slug} | {title}")
-        
-        print(f"Total vs. events: {vs_count}")
-        
-        # Now fetch first one
-        if vs_count > 0:
-            for event in events_list:
-                if "vs." in event.get("title",""):
-                    slug = event.get("slug","")
-                    er = requests.get(f"https://gamma-api.polymarket.com/events?slug={slug}", timeout=5)
-                    print(f"Slug fetch: status={er.status_code} len={len(er.text)}")
-                    edata = er.json()
-                    print(f"Markets in event: {len(edata[0].get('markets',[]) if edata else [])}")
-                    break
-        
+            if "vs." not in title:
+                continue
+            
+            # Fetch individual event to get market prices
+            er = requests.get(f"https://gamma-api.polymarket.com/events?slug={slug}", timeout=5)
+            if er.status_code != 200:
+                continue
+            event_data = er.json()
+            if not event_data:
+                continue
+            
+            for market in event_data[0].get("markets", []):
+                prices = market.get("outcomePrices", "[]")
+                if isinstance(prices, str):
+                    prices = json.loads(prices)
+                if not prices:
+                    continue
+                price = float(prices[0])
+                team = market.get("groupItemTitle", "").lower().strip()
+                if not team or "draw" in team or price < 0.05 or price > 0.95:
+                    continue
+                markets.append({
+                    "question": market.get("question", ""),
+                    "team": team,
+                    "id": market.get("id", ""),
+                    "price": price,
+                })
+
+        print(f"Found {len(markets)} Polymarket match markets")
+        for m in markets[:5]:
+            print(f"Poly: {m['team']} @ {m['price']}")
         return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
-        import traceback
-        traceback.print_exc()
         return []
 
 def match_markets(kalshi_markets, poly_markets):
