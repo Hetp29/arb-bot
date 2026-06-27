@@ -104,22 +104,24 @@ def get_polymarket_markets():
                 prices = market.get("outcomePrices", "[]")
                 if isinstance(prices, str):
                     prices = json.loads(prices)
-                if not prices:
+                if not prices or len(prices) < 2:
                     continue
-                price = float(prices[0])
+                p_yes = float(prices[0])  # YES ask
+                p_no = float(prices[1])   # NO ask (actual, not 1-yes)
                 team = market.get("groupItemTitle", "").lower().strip()
-                if not team or "draw" in team or price < 0.05 or price > 0.95:
+                if not team or "draw" in team or p_yes < 0.05 or p_yes > 0.95:
                     continue
                 markets.append({
                     "question": question,
                     "team": team,
                     "id": market.get("id", ""),
                     "slug": market.get("slug", ""),
-                    "price": price,
+                    "p_yes": p_yes,
+                    "p_no": p_no,
                 })
         print(f"Found {len(markets)} Polymarket match markets")
         for m in markets[:5]:
-            print(f"Poly: {m['team']} @ {m['price']}")
+            print(f"Poly: {m['team']} YES@{m['p_yes']} NO@{m['p_no']}")
         return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
@@ -139,95 +141,76 @@ def match_markets(kalshi_markets, poly_markets):
 def find_arb(kalshi_markets, poly_markets):
     opportunities = []
     pairs = match_markets(kalshi_markets, poly_markets)
-    
+    MAX_PAYOUT = 25.0
+
     for km, pm in pairs:
         try:
-            # 1. Get the actual contract prices (0.0 to 1.0)
             k_yes = float(km.get("yes_ask", 0))
             k_no = float(km.get("no_ask", 0))
-            p_yes = float(pm.get("price", 0))
-            p_no = 1.0 - p_yes  # Dynamic approximation for Polymarket No
-            
-            if k_yes <= 0 or p_yes <= 0:
+            p_yes = float(pm.get("p_yes", 0))
+            p_no = float(pm.get("p_no", 0))
+
+            if k_yes <= 0 or k_no <= 0 or p_yes <= 0 or p_no <= 0:
                 continue
 
-            # --- ARB STRATEGY 1: Buy Kalshi YES + Polymarket NO ---
-            total_cost_1 = k_yes + p_no
-            if total_cost_1 < 1.0:
-                edge_1 = 1.0 - total_cost_1
-                if edge_1 >= MIN_EDGE:
-                    opportunities.append({
-                        "title": km["title"],
-                        "subtitle": km["subtitle"],
-                        "kalshi_ticker": km["ticker"],
-                        "poly_id": pm.get("id", ""),
-                        "poly_slug": pm.get("slug", ""),
-                        "edge": round(edge_1 * 100, 2),
-                        "buy_on": "Kalshi",  # Meaning Kalshi YES, Poly NO
-                        "kalshi_odds": round(1/k_yes, 2),
-                        "poly_odds": round(1/p_no, 2),
-                    })
+            # Strategy 1: Kalshi YES + Polymarket NO
+            k_cost_1 = MAX_PAYOUT * k_yes
+            p_cost_1 = MAX_PAYOUT * p_no
+            total_1 = k_cost_1 + p_cost_1
+            profit_1 = MAX_PAYOUT - total_1
+            if profit_1 > 0:
+                opportunities.append({
+                    "title": km["title"],
+                    "subtitle": km["subtitle"],
+                    "kalshi_ticker": km["ticker"],
+                    "poly_slug": pm.get("slug", ""),
+                    "edge": round((profit_1 / total_1) * 100, 2),
+                    "profit": round(profit_1, 2),
+                    "buy_on": "Kalshi",
+                    "kalshi_action": "BUY YES",
+                    "poly_action": "BUY NO",
+                    "kalshi_bet": round(k_cost_1, 2),
+                    "poly_bet": round(p_cost_1, 2),
+                    "total_cost": round(total_1, 2),
+                })
 
-            # --- ARB STRATEGY 2: Buy Kalshi NO + Polymarket YES ---
-            total_cost_2 = k_no + p_yes
-            if total_cost_2 < 1.0:
-                edge_2 = 1.0 - total_cost_2
-                if edge_2 >= MIN_EDGE:
-                    opportunities.append({
-                        "title": km["title"],
-                        "subtitle": km["subtitle"],
-                        "kalshi_ticker": km["ticker"],
-                        "poly_id": pm.get("id", ""),
-                        "poly_slug": pm.get("slug", ""),
-                        "edge": round(edge_2 * 100, 2),
-                        "buy_on": "Polymarket", # Meaning Poly YES, Kalshi NO
-                        "kalshi_odds": round(1/k_no, 2),
-                        "poly_odds": round(1/p_yes, 2),
-                    })
+            # Strategy 2: Kalshi NO + Polymarket YES
+            k_cost_2 = MAX_PAYOUT * k_no
+            p_cost_2 = MAX_PAYOUT * p_yes
+            total_2 = k_cost_2 + p_cost_2
+            profit_2 = MAX_PAYOUT - total_2
+            if profit_2 > 0:
+                opportunities.append({
+                    "title": km["title"],
+                    "subtitle": km["subtitle"],
+                    "kalshi_ticker": km["ticker"],
+                    "poly_slug": pm.get("slug", ""),
+                    "edge": round((profit_2 / total_2) * 100, 2),
+                    "profit": round(profit_2, 2),
+                    "buy_on": "Polymarket",
+                    "kalshi_action": "BUY NO",
+                    "poly_action": "BUY YES",
+                    "kalshi_bet": round(k_cost_2, 2),
+                    "poly_bet": round(p_cost_2, 2),
+                    "total_cost": round(total_2, 2),
+                })
 
         except Exception as e:
             print(f"Arb error: {e}")
             continue
-            
-    return sorted(opportunities, key=lambda x: x["edge"], reverse=True)
+
+    return sorted(opportunities, key=lambda x: x["profit"], reverse=True)
 
 def execute_trade(opp):
     poly_url = f"https://polymarket.com/event/{opp['poly_slug'].rsplit('-', 1)[0]}"
-
-    # To build a true arbitrage, we want both sides to pay out the same amount (MAX_BET)
-    # Payout = Bet Amount / Price
-    # Therefore: Bet Amount = Payout * Price
-    
-    if opp["buy_on"] == "Kalshi":
-        # Strategy 1: Kalshi YES + Polymarket NO
-        k_price = 1 / opp["kalshi_odds"]
-        p_price = 1 / opp["poly_odds"]  # This is the Poly NO price
-        
-        kalshi_bet = round(MAX_BET * k_price, 2)
-        poly_bet = round(MAX_BET * p_price, 2)
-        
-        kalshi_action = f"BUY YES ${kalshi_bet}"
-        poly_action = f"BUY NO ${poly_bet}"
-    else:
-        # Strategy 2: Kalshi NO + Polymarket YES
-        k_price = 1 / opp["kalshi_odds"]  # This is the Kalshi NO price
-        p_price = 1 / opp["poly_odds"]
-        
-        kalshi_bet = round(MAX_BET * k_price, 2)
-        poly_bet = round(MAX_BET * p_price, 2)
-        
-        kalshi_action = f"BUY NO ${kalshi_bet}"
-        poly_action = f"BUY YES ${poly_bet}"
-
     msg = (
-        f"🚨 REAL ARB OPPORTUNITY FOUND!\n\n"
+        f"🚨 REAL ARB OPPORTUNITY!\n\n"
         f"Market: {opp['title']}\n"
-        f"Net Profit Margin: {opp['edge']}%\n\n"
-        f"1️⃣ KALSHI: {kalshi_action}\n"
-        f"→ Team: {opp['subtitle']}\n"
-        f"→ Odds: {opp['kalshi_odds']}x\n\n"
-        f"2️⃣ POLYMARKET: {poly_action}\n"
-        f"→ Odds: {opp['poly_odds']}x\n"
+        f"Guaranteed Profit: ${opp['profit']} ({opp['edge']}%)\n"
+        f"Total Cost: ${opp['total_cost']}\n\n"
+        f"1️⃣ KALSHI: {opp['kalshi_action']} ${opp['kalshi_bet']}\n"
+        f"→ Team: {opp['subtitle']}\n\n"
+        f"2️⃣ POLYMARKET: {opp['poly_action']} ${opp['poly_bet']}\n"
         f"→ {poly_url}\n\n"
         f"⏰ Act fast!\n"
         f"Time: {datetime.datetime.now().strftime('%H:%M:%S')}"
