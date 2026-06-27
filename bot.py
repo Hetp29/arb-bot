@@ -29,14 +29,18 @@ def get_kalshi_markets():
         url = "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXWCGAME&limit=100"
         headers = {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json", "Accept": "application/json"}
         r = requests.get(url, headers=headers, timeout=5)
-        print(f"Kalshi status: {r.status_code}")
         data = r.json()
         markets = []
         for market in data.get("markets", []):
-            markets.append({"title": market.get("title", ""), "ticker": market.get("ticker", ""), "yes_ask": market.get("yes_ask", 0), "no_ask": market.get("no_ask", 0)})
+            # Print raw market to see all fields
+            print(f"RAW: {list(market.keys())} | yes_ask={market.get('yes_ask')} | yes_ask_price={market.get('yes_ask_price')} | last_price={market.get('last_price')}")
+            markets.append({
+                "title": market.get("title", ""),
+                "ticker": market.get("ticker", ""),
+                "yes_ask": market.get("yes_ask_price") or market.get("yes_ask") or market.get("last_price") or 0,
+                "no_ask": market.get("no_ask_price") or market.get("no_ask") or 0,
+            })
         print(f"Found {len(markets)} Kalshi markets")
-        for m in markets[:3]:
-            print(f"Kalshi sample: {m['title']} | yes_ask: {m['yes_ask']}")
         return markets
     except Exception as e:
         print(f"Kalshi error: {e}")
@@ -44,11 +48,12 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        url = "https://gamma-api.polymarket.com/markets?tag=soccer&active=true&closed=false&limit=100"
+        # Use FIFA World Cup specific tag instead of generic soccer
+        url = "https://gamma-api.polymarket.com/markets?tag=fifa-world-cup&active=true&closed=false&limit=100"
         r = requests.get(url, timeout=5)
         data = r.json()
         print(f"Found {len(data)} Polymarket markets")
-        for m in data[:3]:
+        for m in data[:5]:
             print(f"Poly sample: {m.get('question', '')}")
         return data
     except Exception as e:
