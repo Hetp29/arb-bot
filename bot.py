@@ -30,8 +30,14 @@ def send_telegram(msg):
 def get_kalshi_markets():
     try:
         url = "https://trading-api.kalshi.com/trade-api/v2/events?status=open&series_ticker=KXWORLDSOCCER"
-        headers = {"Authorization": f"Bearer {KALSHI_API_KEY}"}
+        headers = {
+            "Authorization": f"Bearer {KALSHI_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
         r = requests.get(url, headers=headers, timeout=5)
+        print(f"Kalshi status: {r.status_code}")
+        print(f"Kalshi response: {r.text[:200]}")
         data = r.json()
         markets = []
         for event in data.get("events", []):
