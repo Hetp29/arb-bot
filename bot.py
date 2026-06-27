@@ -49,35 +49,26 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        # Search for specific match markets using keyword search
-        url = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=100&q=wins+the+match"
+        # Use Polymarket sports API for individual match markets
+        url = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=100&tag=world-cup-2026"
         r = requests.get(url, timeout=5)
         data = r.json()
         markets = data if isinstance(data, list) else data.get("markets", [])
         
-        # Also try second search for World Cup matches
-        url2 = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=100&q=world+cup+winner+match"
-        r2 = requests.get(url2, timeout=5)
-        data2 = r2.json()
-        markets2 = data2 if isinstance(data2, list) else data2.get("markets", [])
+        # Filter only match markets by looking for "vs" in question
+        match_markets = [m for m in markets if " vs " in m.get("question", "").lower() or "win the match" in m.get("question", "").lower()]
         
-        all_markets = markets + markets2
-        
-        # Filter to only match markets (prices between 20-80% = realistic match odds)
-        match_markets = []
-        for m in all_markets:
-            prices = m.get("outcomePrices", "[]")
-            if isinstance(prices, str):
-                try:
-                    prices = json.loads(prices)
-                except:
-                    continue
-            if prices and 0.15 <= float(prices[0]) <= 0.85:
-                match_markets.append(m)
-        
+        if not match_markets:
+            # Try sports endpoint
+            url2 = "https://gamma-api.polymarket.com/sports/soccer/games?active=true&limit=100"
+            r2 = requests.get(url2, timeout=5)
+            if r2.status_code == 200:
+                data2 = r2.json()
+                match_markets = data2 if isinstance(data2, list) else data2.get("markets", [])
+
         print(f"Found {len(match_markets)} Polymarket match markets")
         for m in match_markets[:5]:
-            print(f"Poly: {m.get('question', '')}")
+            print(f"Poly match: {m.get('question', '')}")
         return match_markets
     except Exception as e:
         print(f"Polymarket error: {e}")
