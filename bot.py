@@ -33,7 +33,7 @@ def get_kalshi_markets():
         for market in data.get("markets", []):
             yes_ask = float(market.get("yes_ask_dollars", 0) or 0)
             no_ask = float(market.get("no_ask_dollars", 0) or 0)
-            if yes_ask > 0:
+            if 0.05 < yes_ask < 0.95:
                 markets.append({
                     "title": market.get("title", ""),
                     "subtitle": market.get("yes_sub_title", ""),
