@@ -107,7 +107,7 @@ def get_polymarket_markets():
         try:
             path = "/v1/markets"
             headers = get_poly_headers("GET", path)
-            r2 = requests.get("https://api.polymarket.us/v1/markets?limit=3", headers=headers, timeout=5)
+            r2 = requests.get("https://api.polymarket.us/v1/markets?limit=10&category=sports&q=colombia", headers=headers, timeout=5)
             print(f"Poly US markets: {r2.text[:500]}")
         except Exception as e:
             print(f"Poly US debug error: {e}")
@@ -219,7 +219,7 @@ def place_kalshi_order(ticker, side, amount, price):
             "side": "bid" if side == "yes" else "ask",
             "count": f"{count}.00",
             "price": f"{price:.4f}",
-            "time_in_force": "fill_or_kill",
+            "time_in_force": "good_till_canceled",
             "self_trade_prevention_type": "taker_at_cross",
         }
         print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f} (max ${MAX_BET})")
