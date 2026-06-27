@@ -2,16 +2,10 @@ import time
 import requests
 import os
 import json
-from datetime import datetime
-
-try:
-    from kalshi_python.api import ExchangeApi
-    from kalshi_python.models import CreateOrderRequest
-    import kalshi_python
-    KALSHI_SDK = True
-except ImportError:
-    KALSHI_SDK = False
-    print("Kalshi SDK not installed")
+import base64
+import datetime
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 KALSHI_API_KEY = os.environ.get("KALSHI_API_KEY")
 KALSHI_API_SECRET = os.environ.get("KALSHI_API_SECRET")
@@ -33,18 +27,41 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
 
-def get_kalshi_client():
-    config = kalshi_python.Configuration()
-    config.host = "https://api.elections.kalshi.com/trade-api/v2"
-    config.api_key["Authorization"] = KALSHI_API_KEY
-    config.api_key_prefix["Authorization"] = "Bearer"
-    return ExchangeApi(kalshi_python.ApiClient(config))
+def get_kalshi_headers(method, path):
+    try:
+        timestamp = str(int(datetime.datetime.now().timestamp() * 1000))
+        msg = timestamp + method.upper() + path
+        private_key_pem = KALSHI_API_SECRET.encode()
+        private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+        signature = private_key.sign(
+            msg.encode(),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.DIGEST_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return {
+            "KALSHI-ACCESS-KEY": KALSHI_API_KEY,
+            "KALSHI-ACCESS-TIMESTAMP": timestamp,
+            "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode(),
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+    except Exception as e:
+        print(f"Kalshi signing error: {e}")
+        return {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json"}
 
 def get_kalshi_markets():
     try:
-        url = "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXWCGAME&limit=100"
-        headers = {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json", "Accept": "application/json"}
-        r = requests.get(url, headers=headers, timeout=5)
+        path = "/trade-api/v2/markets"
+        params = "?series_ticker=KXWCGAME&limit=100"
+        headers = get_kalshi_headers("GET", path)
+        r = requests.get(
+            f"https://api.elections.kalshi.com{path}{params}",
+            headers=headers,
+            timeout=5
+        )
         data = r.json()
         markets = []
         for market in data.get("markets", []):
@@ -151,36 +168,29 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount):
     try:
-        if KALSHI_SDK:
-            client = get_kalshi_client()
-            order = CreateOrderRequest(
-                ticker=ticker,
-                side=side,
-                type="market",
-                count=int(amount * 100),
-            )
-            result = client.create_order(order)
-            print(f"Kalshi order: {result}")
-            return result
-        else:
-            url = "https://api.elections.kalshi.com/trade-api/v2/portfolio/events/orders"
-            headers = {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "ticker": ticker,
-                "side": "bid" if side == "yes" else "ask",
-                "type": "market",
-                "count": f"{int(amount * 100)}.00",
-                "time_in_force": "fill_or_kill",
-                "self_trade_prevention_type": "taker_at_cross",
-                "client_order_id": f"arb-{int(time.time())}",
-            }
-            r = requests.post(url, headers=headers, json=payload, timeout=5)
-            print(f"Kalshi order: {r.text[:200]}")
-            data = r.json()
-            if "error" in data:
-                print(f"Kalshi order failed: {data['error']}")
-                return None
-            return data
+        path = "/trade-api/v2/portfolio/events/orders"
+        headers = get_kalshi_headers("POST", path)
+        payload = {
+            "ticker": ticker,
+            "client_order_id": f"arb-{int(time.time())}",
+            "side": "bid" if side == "yes" else "ask",
+            "count": f"{int(amount * 100)}.00",
+            "price": "0.5000",
+            "time_in_force": "fill_or_kill",
+            "self_trade_prevention_type": "taker_at_cross",
+        }
+        r = requests.post(
+            f"https://api.elections.kalshi.com{path}",
+            headers=headers,
+            json=payload,
+            timeout=5
+        )
+        print(f"Kalshi order: {r.text[:200]}")
+        data = r.json()
+        if "error" in data:
+            print(f"Kalshi order failed: {data['error']}")
+            return None
+        return data
     except Exception as e:
         print(f"Kalshi order error: {e}")
         return None
@@ -203,7 +213,6 @@ def place_poly_order(market_id, side, amount):
         print(f"Poly order: {r.text[:200]}")
         data = r.json()
         if "error" in str(data):
-            print(f"Poly order failed: {data}")
             return None
         return data
     except Exception as e:
@@ -237,7 +246,7 @@ def execute_trade(opp):
         f"FADE {opp['fade_on']}: ${fade_bet}\n"
         f"Est. Profit: ${estimated_profit}\n"
         f"Session P&L: ${session_pnl}\n"
-        f"Time: {datetime.now().strftime('%H:%M:%S')}"
+        f"Time: {datetime.datetime.now().strftime('%H:%M:%S')}"
     )
     send_telegram(msg)
     print(msg)
@@ -250,7 +259,7 @@ def main():
         if session_pnl <= -STOP_LOSS:
             send_telegram(f"🛑 STOP LOSS HIT: ${session_pnl}\nBot paused.")
             break
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Scanning...")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Scanning...")
         kalshi = get_kalshi_markets()
         poly = get_polymarket_markets()
         opps = find_arb(kalshi, poly)
@@ -258,7 +267,7 @@ def main():
             print(f"Found {len(opps)} opps! Best: {opps[0]['edge']}%")
             execute_trade(opps[0])
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] No arb found")
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] No arb found")
         time.sleep(SCAN_INTERVAL)
 
 if __name__ == "__main__":

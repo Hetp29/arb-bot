@@ -1,2 +1,4 @@
 requests
 kalshi-python
+polymarket-us
+cryptography
