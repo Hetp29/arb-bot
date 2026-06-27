@@ -1,2 +1,4 @@
-curl -H "Authorization: Bearer 814ded14-68f6-4eb5-a4a0-274939fbc620" \
-"https://api.elections.kalshi.com/trade-api/v2/events?status=open&limit=5"
+curl "https://api.polymarket.us/v1/markets" \
+-H "POLY-ADDRESS: d5f9f2cf-7fa3-4841-a343-a21956f53f21" \
+-H "POLY-SIGNATURE: BQNfGILRU4cJDrOFwkoCtOuApBQpVCbh6KcY8oWjb PyN0269ZejV5kxsKjnzj0F3FTHVwgvJpzUBX/LNKmJCA==" \
+-H "POLY-TIMESTAMP: $(date +%s)" | head -50
