@@ -103,6 +103,15 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
+        # Debug: check what slugs Polymarket US uses
+        try:
+            path = "/v1/markets"
+            headers = get_poly_headers("GET", path)
+            r2 = requests.get("https://api.polymarket.us/v1/markets?limit=3", headers=headers, timeout=5)
+            print(f"Poly US markets: {r2.text[:500]}")
+        except Exception as e:
+            print(f"Poly US debug error: {e}")
+
         url = "https://gamma-api.polymarket.com/events?series_slug=soccer-fifwc&active=true&closed=false&limit=10"
         r = requests.get(url, timeout=10)
         events_list = r.json()
@@ -196,19 +205,24 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount, price):
     try:
+        # Safety check — never exceed MAX_BET
+        amount = min(amount, MAX_BET)
         path = "/trade-api/v2/portfolio/events/orders"
         headers = get_kalshi_headers("POST", path)
         count = max(1, int(amount / price))
+        # Double check count doesn't exceed budget
+        while count * price > MAX_BET and count > 1:
+            count -= 1
         payload = {
             "ticker": ticker,
             "client_order_id": f"arb-{int(time.time())}",
             "side": "bid" if side == "yes" else "ask",
             "count": f"{count}.00",
             "price": f"{price:.4f}",
-            "time_in_force": "immediate_or_cancel",
+            "time_in_force": "fill_or_kill",
             "self_trade_prevention_type": "taker_at_cross",
         }
-        print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f}")
+        print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f} (max ${MAX_BET})")
         r = requests.post(
             f"https://api.elections.kalshi.com{path}",
             headers=headers,
@@ -225,16 +239,18 @@ def place_kalshi_order(ticker, side, amount, price):
         print(f"Kalshi order error: {e}")
         return None
 
-def place_poly_order(market_id, side, amount):
+def place_poly_order(market_slug, side, amount):
     try:
+        # Safety check — never exceed MAX_BET
+        amount = min(amount, MAX_BET)
         path = "/v1/orders"
         headers = get_poly_headers("POST", path)
         intent = "ORDER_INTENT_BUY_LONG" if side == "yes" else "ORDER_INTENT_BUY_SHORT"
         payload = {
-            "marketSlug": market_id,
+            "marketSlug": market_slug,
             "intent": intent,
             "type": "ORDER_TYPE_MARKET",
-            "cashOrderQty": {"value": str(amount), "currency": "USD"},
+            "cashOrderQty": {"value": str(round(amount, 2)), "currency": "USD"},
         }
         r = requests.post(
             f"https://api.polymarket.us{path}",
@@ -254,6 +270,7 @@ def place_poly_order(market_id, side, amount):
 
 def execute_trade(opp):
     global session_pnl
+    # Safety: split MAX_BET across both legs, never exceed total
     buy_bet = round(MAX_BET * 0.55, 2)
     fade_bet = round(MAX_BET * 0.45, 2)
 
@@ -286,7 +303,12 @@ def execute_trade(opp):
 
 def main():
     global session_pnl
-    send_telegram(f"🚀 Arb Bot Started!\nMax Bet: ${MAX_BET}\nMin Edge: {int(MIN_EDGE*100)}%\nStop Loss: ${STOP_LOSS}")
+    send_telegram(
+        f"🚀 Arb Bot Started!\n"
+        f"Max Bet: ${MAX_BET}\n"
+        f"Min Edge: {int(MIN_EDGE*100)}%\n"
+        f"Stop Loss: ${STOP_LOSS}"
+    )
     print("Bot running...")
     while True:
         if session_pnl <= -STOP_LOSS:
