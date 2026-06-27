@@ -17,6 +17,7 @@ MIN_EDGE = 0.05
 STOP_LOSS = 25
 SCAN_INTERVAL = 3
 session_pnl = 0
+traded_markets = set()
 
 def send_telegram(msg):
     if not TELEGRAM_BOT_TOKEN:
@@ -152,7 +153,7 @@ def find_arb(kalshi_markets, poly_markets):
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
             print(f"Edge: {km['subtitle']} | K:{k_price} P:{p_price} | {round(edge*100,1)}%")
-            if MIN_EDGE <= edge <= 1.0:
+            if MIN_EDGE <= edge <= 1.0 and k_odds > p_odds:  # Only buy on Kalshi
                 opportunities.append({
                     "title": km["title"],
                     "subtitle": km["subtitle"],
@@ -186,7 +187,7 @@ def place_kalshi_order(ticker, side, amount, price):
             "side": "bid" if side == "yes" else "ask",
             "count": f"{count}.00",
             "price": f"{price:.4f}",
-            "time_in_force": "good_till_canceled",
+            "time_in_force": "immediate_or_cancel",
             "self_trade_prevention_type": "taker_at_cross",
         }
         print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f}")
@@ -208,6 +209,10 @@ def place_kalshi_order(ticker, side, amount, price):
 
 def execute_trade(opp):
     global session_pnl, traded_markets
+    market_key = opp["kalshi_ticker"]
+    if market_key in traded_markets:
+        print(f"Already traded {market_key}, skipping")
+        return
 
 
     
@@ -234,6 +239,9 @@ def execute_trade(opp):
     if not k_result:
         print("⚠️ Kalshi order failed")
         return
+    
+    traded_markets.add(market_key)
+
 
 
 
