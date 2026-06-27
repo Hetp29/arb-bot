@@ -49,27 +49,29 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        # Use Polymarket sports API for individual match markets
-        url = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=100&tag=world-cup-2026"
+        url = "https://gamma-api.polymarket.com/series/11433"
         r = requests.get(url, timeout=5)
         data = r.json()
-        markets = data if isinstance(data, list) else data.get("markets", [])
-        
-        # Filter only match markets by looking for "vs" in question
-        match_markets = [m for m in markets if " vs " in m.get("question", "").lower() or "win the match" in m.get("question", "").lower()]
-        
-        if not match_markets:
-            # Try sports endpoint
-            url2 = "https://gamma-api.polymarket.com/sports/soccer/games?active=true&limit=100"
-            r2 = requests.get(url2, timeout=5)
-            if r2.status_code == 200:
-                data2 = r2.json()
-                match_markets = data2 if isinstance(data2, list) else data2.get("markets", [])
-
-        print(f"Found {len(match_markets)} Polymarket match markets")
-        for m in match_markets[:5]:
-            print(f"Poly match: {m.get('question', '')}")
-        return match_markets
+        markets = []
+        for event in data.get("events", []):
+            for market in event.get("markets", []):
+                question = market.get("question", "")
+                prices = market.get("outcomePrices", "[]")
+                if isinstance(prices, str):
+                    try:
+                        prices = json.loads(prices)
+                    except:
+                        continue
+                if prices and 0.01 <= float(prices[0]) <= 0.99:
+                    markets.append({
+                        "question": question,
+                        "id": market.get("id", ""),
+                        "outcomePrices": prices,
+                    })
+        print(f"Found {len(markets)} Polymarket match markets")
+        for m in markets[:5]:
+            print(f"Poly: {m['question']}")
+        return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
         return []
