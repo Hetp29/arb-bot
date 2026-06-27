@@ -140,7 +140,6 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount):
     try:
-        # V2 endpoint
         url = "https://api.elections.kalshi.com/trade-api/v2/portfolio/orders"
         headers = {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json"}
         payload = {
@@ -152,7 +151,11 @@ def place_kalshi_order(ticker, side, amount):
         }
         r = requests.post(url, headers=headers, json=payload, timeout=5)
         print(f"Kalshi order: {r.text[:200]}")
-        return r.json()
+        data = r.json()
+        if "error" in data:
+            print(f"Kalshi order failed: {data['error']}")
+            return None
+        return data
     except Exception as e:
         print(f"Kalshi order error: {e}")
         return None
@@ -173,18 +176,25 @@ def execute_trade(opp):
     global session_pnl
     buy_bet = round(MAX_BET * 0.55, 2)
     fade_bet = round(MAX_BET * 0.45, 2)
+    
     if opp["buy_on"] == "Kalshi":
-        place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet)
-        place_poly_order(opp["poly_id"], "no", fade_bet)
+        k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet)
+        p_result = place_poly_order(opp["poly_id"], "no", fade_bet)
     else:
-        place_poly_order(opp["poly_id"], "yes", buy_bet)
-        place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet)
+        p_result = place_poly_order(opp["poly_id"], "yes", buy_bet)
+        k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet)
+
+    # Only count if both orders succeeded
+    if not k_result or "error" in str(k_result) or not p_result or "error" in str(p_result):
+        print("⚠️ Orders failed - not counting P&L")
+        return
+
     estimated_profit = round(buy_bet * opp["kalshi_odds"] - MAX_BET, 2)
     session_pnl = round(session_pnl + estimated_profit, 2)
     msg = (f"🤖 TRADE EXECUTED\nMarket: {opp['title']}\n{opp['subtitle']}\nEdge: {opp['edge']}%\nBUY {opp['buy_on']}: ${buy_bet}\nFADE {opp['fade_on']}: ${fade_bet}\nEst. Profit: ${estimated_profit}\nSession P&L: ${session_pnl}\nTime: {datetime.now().strftime('%H:%M:%S')}")
     send_telegram(msg)
     print(msg)
-
+    
 def main():
     global session_pnl
     send_telegram(f"🚀 Arb Bot Started!\nMax Bet: ${MAX_BET}\nMin Edge: {int(MIN_EDGE*100)}%\nStop Loss: ${STOP_LOSS}")
