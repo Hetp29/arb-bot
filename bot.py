@@ -196,16 +196,16 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount, price):
     try:
-        path = "/trade-api/v2/portfolio/orders"
+        path = "/trade-api/v2/portfolio/events/orders"
         headers = get_kalshi_headers("POST", path)
         count = max(1, int(amount / price))
         payload = {
             "ticker": ticker,
             "client_order_id": f"arb-{int(time.time())}",
             "side": "bid" if side == "yes" else "ask",
-            "count": str(count),
-            "type": "market",
-            "time_in_force": "fill_or_kill",
+            "count": f"{count}.00",
+            "price": f"{price:.4f}",
+            "time_in_force": "immediate_or_cancel",
             "self_trade_prevention_type": "taker_at_cross",
         }
         print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f}")
