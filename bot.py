@@ -5,7 +5,7 @@ import json
 import base64
 import datetime
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, ed25519
 
 KALSHI_API_KEY = os.environ.get("KALSHI_API_KEY")
 KALSHI_API_SECRET = os.environ.get("KALSHI_API_SECRET")
@@ -15,7 +15,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 MAX_BET = 25
-MIN_EDGE = 0.08
+MIN_EDGE = 0.05
 STOP_LOSS = 25
 SCAN_INTERVAL = 3
 session_pnl = 0
@@ -53,6 +53,24 @@ def get_kalshi_headers(method, path):
     except Exception as e:
         print(f"Kalshi signing error: {e}")
         return {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json"}
+
+def get_poly_headers(method, path):
+    try:
+        timestamp = str(int(time.time() * 1000))
+        message = f"{timestamp}{method}{path}"
+        private_key = ed25519.Ed25519PrivateKey.from_private_bytes(
+            base64.b64decode(POLYMARKET_API_SECRET)[:32]
+        )
+        signature = base64.b64encode(private_key.sign(message.encode())).decode()
+        return {
+            "X-PM-Access-Key": POLYMARKET_API_KEY,
+            "X-PM-Timestamp": timestamp,
+            "X-PM-Signature": signature,
+            "Content-Type": "application/json",
+        }
+    except Exception as e:
+        print(f"Poly signing error: {e}")
+        return {"Content-Type": "application/json"}
 
 def get_kalshi_markets():
     try:
@@ -102,7 +120,6 @@ def get_polymarket_markets():
                 continue
             for market in event_data[0].get("markets", []):
                 question = market.get("question", "")
-                # Filter out halftime and non-winner markets
                 if any(x in question.lower() for x in ["halftime", "half", "leading", "first", "corner", "score"]):
                     continue
                 prices = market.get("outcomePrices", "[]")
@@ -118,6 +135,7 @@ def get_polymarket_markets():
                     "question": question,
                     "team": team,
                     "id": market.get("id", ""),
+                    "slug": market.get("slug", ""),
                     "price": price,
                 })
         print(f"Found {len(markets)} Polymarket match markets")
@@ -161,6 +179,7 @@ def find_arb(kalshi_markets, poly_markets):
                     "subtitle": km["subtitle"],
                     "kalshi_ticker": km["ticker"],
                     "poly_id": pm.get("id", ""),
+                    "poly_slug": pm.get("slug", ""),
                     "kalshi_odds": k_odds,
                     "poly_odds": p_odds,
                     "k_price": k_price,
@@ -205,24 +224,27 @@ def place_kalshi_order(ticker, side, amount, price):
         print(f"Kalshi order error: {e}")
         return None
 
-def place_poly_order(market_id, side, amount):
+def place_poly_order(market_slug, side, amount):
     try:
-        url = "https://api.polymarket.us/v1/orders"
-        headers = {
-            "Content-Type": "application/json",
-            "POLY-API-KEY": POLYMARKET_API_KEY,
-            "POLY-SECRET": POLYMARKET_API_SECRET,
-        }
+        path = "/v1/orders"
+        headers = get_poly_headers("POST", path)
+        intent = "ORDER_INTENT_BUY_LONG" if side == "yes" else "ORDER_INTENT_BUY_SHORT"
         payload = {
-            "marketId": market_id,
-            "side": "BUY" if side == "yes" else "SELL",
-            "type": "MARKET",
-            "amount": str(amount),
+            "marketSlug": market_slug,
+            "intent": intent,
+            "type": "ORDER_TYPE_MARKET",
+            "cashOrderQty": {"value": str(amount), "currency": "USD"},
         }
-        r = requests.post(url, headers=headers, json=payload, timeout=5)
+        r = requests.post(
+            f"https://api.polymarket.us{path}",
+            headers=headers,
+            json=payload,
+            timeout=5
+        )
         print(f"Poly order: {r.text[:200]}")
         data = r.json()
-        if "error" in str(data):
+        if "error" in str(data).lower():
+            print(f"Poly order failed: {data}")
             return None
         return data
     except Exception as e:
@@ -236,9 +258,9 @@ def execute_trade(opp):
 
     if opp["buy_on"] == "Kalshi":
         k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet, opp["k_price"])
-        p_result = place_poly_order(opp["poly_id"], "no", fade_bet)
+        p_result = place_poly_order(opp["poly_slug"], "no", fade_bet)
     else:
-        p_result = place_poly_order(opp["poly_id"], "yes", buy_bet)
+        p_result = place_poly_order(opp["poly_slug"], "yes", buy_bet)
         k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
     if not k_result or not p_result:
