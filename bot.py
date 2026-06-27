@@ -5,7 +5,6 @@ import json
 from datetime import datetime
 
 KALSHI_API_KEY = os.environ.get("KALSHI_API_KEY")
-KALSHI_API_SECRET = os.environ.get("KALSHI_API_SECRET")
 POLYMARKET_API_KEY = os.environ.get("POLYMARKET_API_KEY")
 POLYMARKET_API_SECRET = os.environ.get("POLYMARKET_API_SECRET")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -43,8 +42,6 @@ def get_kalshi_markets():
                     "no_ask": no_ask,
                 })
         print(f"Found {len(markets)} Kalshi markets with prices")
-        for m in markets[:3]:
-            print(f"Kalshi: {m['title']} | {m['subtitle']} | yes_ask: {m['yes_ask']}")
         return markets
     except Exception as e:
         print(f"Kalshi error: {e}")
@@ -52,23 +49,16 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        url = "https://gamma-api.polymarket.com/markets?tag=fifa-world-cup-2026&active=true&closed=false&limit=100"
-        r = requests.get(url, timeout=5)
+        # Use Polymarket US API for match markets
+        url = "https://api.polymarket.us/markets?sports=soccer&limit=100&active=true"
+        headers = {"Authorization": f"Bearer {POLYMARKET_API_KEY}"}
+        r = requests.get(url, headers=headers, timeout=5)
         data = r.json()
-        if not isinstance(data, list):
-            # fallback
-            url2 = "https://gamma-api.polymarket.com/events?tag=fifa-world-cup-2026&active=true&limit=50"
-            r2 = requests.get(url2, timeout=5)
-            data2 = r2.json()
-            markets = []
-            for event in data2 if isinstance(data2, list) else []:
-                for m in event.get("markets", []):
-                    markets.append(m)
-            data = markets
-        print(f"Found {len(data)} Polymarket markets")
-        for m in data[:5]:
-            print(f"Poly: {m.get('question', '')}")
-        return data
+        markets = data if isinstance(data, list) else data.get("markets", [])
+        print(f"Found {len(markets)} Polymarket US markets")
+        for m in markets[:5]:
+            print(f"Poly: {m.get('question', m.get('title', ''))}")
+        return markets
     except Exception as e:
         print(f"Polymarket error: {e}")
         return []
@@ -76,14 +66,21 @@ def get_polymarket_markets():
 def match_markets(kalshi_markets, poly_markets):
     pairs = []
     for km in kalshi_markets:
-        # Extract team names from Kalshi subtitle e.g. "Reg Time: Argentina"
         subtitle = km.get("subtitle", "").lower().replace("reg time:", "").strip()
         for pm in poly_markets:
-            question = pm.get("question", "").lower()
-            if subtitle and subtitle in question:
-                pairs.append((km, pm))
-                print(f"Matched: {km['title']} [{subtitle}] <-> {pm.get('question', '')}")
-    print(f"Total pairs: {len(pairs)}")
+            question = pm.get("question", pm.get("title", "")).lower()
+            if subtitle and len(subtitle) > 3 and subtitle in question:
+                # Only match if Polymarket price is reasonable (between 1% and 99%)
+                prices = pm.get("outcomePrices", pm.get("prices", "[]"))
+                if isinstance(prices, str):
+                    try:
+                        prices = json.loads(prices)
+                    except:
+                        continue
+                if prices and 0.01 <= float(prices[0]) <= 0.99:
+                    pairs.append((km, pm))
+                    print(f"Matched: {km['title']} [{subtitle}] <-> {question}")
+    print(f"Total valid pairs: {len(pairs)}")
     return pairs
 
 def find_arb(kalshi_markets, poly_markets):
@@ -92,21 +89,22 @@ def find_arb(kalshi_markets, poly_markets):
     for km, pm in pairs:
         try:
             k_price = float(km.get("yes_ask", 0))
-            prices = pm.get("outcomePrices", "[]")
+            prices = pm.get("outcomePrices", pm.get("prices", "[]"))
             if isinstance(prices, str):
                 prices = json.loads(prices)
             p_price = float(prices[0]) if prices else 0
-            if k_price <= 0 or p_price <= 0:
+            if k_price <= 0 or p_price <= 0 or k_price > 0.99 or p_price > 0.99:
                 continue
             k_odds = round(1 / k_price, 3)
             p_odds = round(1 / p_price, 3)
             best_odds = max(k_odds, p_odds)
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
-            print(f"Edge check: {km['title']} | K:{k_odds} P:{p_odds} Edge:{round(edge*100,1)}%")
-            if edge >= MIN_EDGE:
+            print(f"Edge: {km['subtitle']} | K:{k_price} P:{p_price} | {round(edge*100,1)}%")
+            if MIN_EDGE <= edge <= 2.0:  # Cap at 200% to filter fake matches
                 opportunities.append({
                     "title": km["title"],
+                    "subtitle": km["subtitle"],
                     "kalshi_ticker": km["ticker"],
                     "poly_id": pm.get("id", ""),
                     "kalshi_odds": k_odds,
@@ -122,9 +120,16 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount):
     try:
+        # V2 endpoint
         url = "https://api.elections.kalshi.com/trade-api/v2/portfolio/orders"
         headers = {"Authorization": f"Bearer {KALSHI_API_KEY}", "Content-Type": "application/json"}
-        payload = {"ticker": ticker, "side": side, "type": "market", "count": int(amount * 100)}
+        payload = {
+            "action": "buy",
+            "ticker": ticker,
+            "side": side,
+            "type": "market",
+            "count": int(amount * 100),
+        }
         r = requests.post(url, headers=headers, json=payload, timeout=5)
         print(f"Kalshi order: {r.text[:200]}")
         return r.json()
@@ -134,9 +139,9 @@ def place_kalshi_order(ticker, side, amount):
 
 def place_poly_order(market_id, side, amount):
     try:
-        url = "https://clob.polymarket.com/order"
+        url = "https://api.polymarket.us/order"
         headers = {"Authorization": f"Bearer {POLYMARKET_API_KEY}", "Content-Type": "application/json"}
-        payload = {"market": market_id, "side": side, "price": amount, "size": amount, "orderType": "MARKET"}
+        payload = {"market": market_id, "side": side, "amount": amount, "orderType": "MARKET"}
         r = requests.post(url, headers=headers, json=payload, timeout=5)
         print(f"Poly order: {r.text[:200]}")
         return r.json()
@@ -156,7 +161,7 @@ def execute_trade(opp):
         place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet)
     estimated_profit = round(buy_bet * opp["kalshi_odds"] - MAX_BET, 2)
     session_pnl = round(session_pnl + estimated_profit, 2)
-    msg = (f"🤖 TRADE EXECUTED\nMarket: {opp['title']}\nEdge: {opp['edge']}%\nBUY {opp['buy_on']}: ${buy_bet}\nFADE {opp['fade_on']}: ${fade_bet}\nEst. Profit: ${estimated_profit}\nSession P&L: ${session_pnl}\nTime: {datetime.now().strftime('%H:%M:%S')}")
+    msg = (f"🤖 TRADE EXECUTED\nMarket: {opp['title']}\n{opp['subtitle']}\nEdge: {opp['edge']}%\nBUY {opp['buy_on']}: ${buy_bet}\nFADE {opp['fade_on']}: ${fade_bet}\nEst. Profit: ${estimated_profit}\nSession P&L: ${session_pnl}\nTime: {datetime.now().strftime('%H:%M:%S')}")
     send_telegram(msg)
     print(msg)
 
