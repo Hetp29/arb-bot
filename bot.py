@@ -16,8 +16,6 @@ MAX_BET = 25
 MIN_EDGE = 0.05
 STOP_LOSS = 25
 SCAN_INTERVAL = 3
-session_pnl = 0
-traded_markets = set()
 
 def send_telegram(msg):
     if not TELEGRAM_BOT_TOKEN:
@@ -153,8 +151,7 @@ def find_arb(kalshi_markets, poly_markets):
             worst_odds = min(k_odds, p_odds)
             edge = (best_odds - worst_odds) / worst_odds
             print(f"Edge: {km['subtitle']} | K:{k_price} P:{p_price} | {round(edge*100,1)}%")
-            if MIN_EDGE <= edge <= 1.0:  # Buy on whichever is cheaper
-
+            if MIN_EDGE <= edge <= 1.0:
                 opportunities.append({
                     "title": km["title"],
                     "subtitle": km["subtitle"],
@@ -174,63 +171,26 @@ def find_arb(kalshi_markets, poly_markets):
             continue
     return sorted(opportunities, key=lambda x: x["edge"], reverse=True)
 
-def place_kalshi_order(ticker, side, amount, price):
-    try:
-        amount = min(amount, MAX_BET)
-        path = "/trade-api/v2/portfolio/events/orders"
-        headers = get_kalshi_headers("POST", path)
-        count = max(1, int(amount / price))
-        while count * price > MAX_BET and count > 1:
-            count -= 1
-        payload = {
-            "ticker": ticker,
-            "client_order_id": f"arb-{int(time.time())}",
-            "side": "bid" if side == "yes" else "ask",
-            "count": f"{count}.00",
-            "price": f"{price:.4f}",
-            "time_in_force": "immediate_or_cancel",
-            "self_trade_prevention_type": "taker_at_cross",
-        } 
-        print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f}")
-        r = requests.post(
-            f"https://api.elections.kalshi.com{path}",
-            headers=headers,
-            json=payload,
-            timeout=5
-        )
-        print(f"Kalshi order: {r.text[:200]}")
-        data = r.json()
-        if "error" in data:
-            print(f"Kalshi order failed: {data['error']}")
-            return None
-        return data
-    except Exception as e:
-        print(f"Kalshi order error: {e}")
-        return None
-
 def execute_trade(opp):
-    global traded_markets
-    market_key = opp["kalshi_ticker"]
-    if market_key in traded_markets:
-        print(f"Already traded {market_key}, skipping")
-        return
-
-    traded_markets.add(market_key)
-
     buy_bet = round(MAX_BET * 0.55, 2)
     fade_bet = round(MAX_BET * 0.45, 2)
     poly_url = f"https://polymarket.com/event/{opp['poly_slug'].rsplit('-', 1)[0]}"
+
+    if opp["buy_on"] == "Kalshi":
+        kalshi_action = f"BUY YES ${buy_bet}"
+        poly_action = f"BUY NO ${fade_bet}"
+    else:
+        kalshi_action = f"BUY NO ${fade_bet}"
+        poly_action = f"BUY YES ${buy_bet}"
 
     msg = (
         f"🚨 ARB OPPORTUNITY!\n\n"
         f"Market: {opp['title']}\n"
         f"Edge: {opp['edge']}%\n\n"
-        f"1️⃣ KALSHI: BUY YES\n"
+        f"1️⃣ KALSHI: {kalshi_action}\n"
         f"→ Team: {opp['subtitle']}\n"
-        f"→ Amount: ${buy_bet}\n"
         f"→ Odds: {opp['kalshi_odds']}x\n\n"
-        f"2️⃣ POLYMARKET: BUY NO\n"
-        f"→ Amount: ${fade_bet}\n"
+        f"2️⃣ POLYMARKET: {poly_action}\n"
         f"→ Odds: {opp['poly_odds']}x\n"
         f"→ {poly_url}\n\n"
         f"⏰ Act fast!\n"
@@ -239,75 +199,26 @@ def execute_trade(opp):
     send_telegram(msg)
     print(msg)
 
-
-    
-    buy_bet = round(MAX_BET * 0.55, 2)
-    fade_bet = round(MAX_BET * 0.45, 2)
-
-    if opp["buy_on"] == "Kalshi":
-        k_side = "yes"
-        poly_action = "BUY NO"
-        poly_url = f"https://polymarket.com/event/{opp['poly_slug'].rsplit('-', 1)[0]}"
-    else:
-        k_side = "no"
-        poly_action = "BUY YES"
-        poly_url = f"https://polymarket.com/event/{opp['poly_slug'].rsplit('-', 1)[0]}"
-
-    # Execute Kalshi automatically
-    k_result = place_kalshi_order(
-        opp["kalshi_ticker"],
-        k_side,
-        buy_bet if opp["buy_on"] == "Kalshi" else fade_bet,
-        opp["k_price"]
-    )
-
-    if not k_result:
-        print("⚠️ Kalshi order failed")
-        return
-    
-    traded_markets.add(market_key)
-
-
-
-
-    # Alert for manual Polymarket side
-    poly_amount = fade_bet if opp["buy_on"] == "Kalshi" else buy_bet
-    msg = (
-        f"🤖 KALSHI EXECUTED - ACT NOW!\n\n"
-        f"Market: {opp['title']}\n"
-        f"Edge: {opp['edge']}%\n\n"
-        f"✅ AUTO DONE: {opp['buy_on']} {k_side.upper()} ${buy_bet if opp['buy_on'] == 'Kalshi' else fade_bet:.2f}\n\n"
-        f"📱 YOU DO NOW (60 sec!):\n"
-        f"→ {poly_action} on Polymarket\n"
-        f"→ Amount: ${poly_amount:.2f}\n"
-        f"→ {poly_url}\n\n"
-        f"Kalshi odds: {opp['kalshi_odds']}x\n"
-        f"Poly odds: {opp['poly_odds']}x\n"
-        f"Time: {datetime.datetime.now().strftime('%H:%M:%S')}"
-    )
-    send_telegram(msg)
-    print(msg)
-
 def main():
-    global session_pnl
+    alerted_markets = set()
     send_telegram(
-        f"🚀 Arb Bot Started! (Kalshi Auto + Poly Manual)\n"
+        f"🚀 Arb Bot Started! (Alert Mode)\n"
         f"Max Bet: ${MAX_BET}\n"
         f"Min Edge: {int(MIN_EDGE*100)}%\n"
         f"Stop Loss: ${STOP_LOSS}"
     )
     print("Bot running...")
     while True:
-        if session_pnl <= -STOP_LOSS:
-            send_telegram(f"🛑 STOP LOSS HIT: ${session_pnl}\nBot paused.")
-            break
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Scanning...")
         kalshi = get_kalshi_markets()
         poly = get_polymarket_markets()
         opps = find_arb(kalshi, poly)
         if opps:
-            print(f"Found {len(opps)} opps! Best: {opps[0]['edge']}%")
-            execute_trade(opps[0])
+            best = opps[0]
+            print(f"Found {len(opps)} opps! Best: {best['edge']}%")
+            if best["kalshi_ticker"] not in alerted_markets:
+                execute_trade(best)
+                alerted_markets.add(best["kalshi_ticker"])
         else:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] No arb found")
         time.sleep(SCAN_INTERVAL)
