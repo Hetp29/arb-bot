@@ -189,7 +189,7 @@ def place_kalshi_order(ticker, side, amount, price):
             "price": f"{price:.4f}",
             "time_in_force": "immediate_or_cancel",
             "self_trade_prevention_type": "taker_at_cross",
-        }
+        } 
         print(f"Kalshi placing: {count} contracts @ ${price} = ${count * price:.2f}")
         r = requests.post(
             f"https://api.elections.kalshi.com{path}",
@@ -208,11 +208,35 @@ def place_kalshi_order(ticker, side, amount, price):
         return None
 
 def execute_trade(opp):
-    global session_pnl, traded_markets
+    global traded_markets
     market_key = opp["kalshi_ticker"]
     if market_key in traded_markets:
         print(f"Already traded {market_key}, skipping")
         return
+
+    traded_markets.add(market_key)
+
+    buy_bet = round(MAX_BET * 0.55, 2)
+    fade_bet = round(MAX_BET * 0.45, 2)
+    poly_url = f"https://polymarket.com/event/{opp['poly_slug'].rsplit('-', 1)[0]}"
+
+    msg = (
+        f"🚨 ARB OPPORTUNITY!\n\n"
+        f"Market: {opp['title']}\n"
+        f"Edge: {opp['edge']}%\n\n"
+        f"1️⃣ KALSHI: BUY YES\n"
+        f"→ Team: {opp['subtitle']}\n"
+        f"→ Amount: ${buy_bet}\n"
+        f"→ Odds: {opp['kalshi_odds']}x\n\n"
+        f"2️⃣ POLYMARKET: BUY NO\n"
+        f"→ Amount: ${fade_bet}\n"
+        f"→ Odds: {opp['poly_odds']}x\n"
+        f"→ {poly_url}\n\n"
+        f"⏰ Act fast!\n"
+        f"Time: {datetime.datetime.now().strftime('%H:%M:%S')}"
+    )
+    send_telegram(msg)
+    print(msg)
 
 
     
