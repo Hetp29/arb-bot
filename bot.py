@@ -1,5 +1,4 @@
 import time
-from wsgiref import headers
 import requests
 import os
 import json
@@ -104,12 +103,16 @@ def get_kalshi_markets():
 
 def get_polymarket_markets():
     try:
-        # Debug: check what slugs Polymarket US uses
+        # Debug: find active soccer moneyline markets on Polymarket US
         try:
             path = "/v1/markets"
             headers = get_poly_headers("GET", path)
-            r2 = requests.get("https://api.polymarket.us/v1/markets?limit=10&q=colombia+portugal+2026", headers=headers, timeout=5)
-            print(f"Poly US markets: {r2.text[:1000]}")
+            r2 = requests.get(
+                "https://api.polymarket.us/v1/markets?limit=20&categories=sports&active=true&closed=false&sportsMarketTypes=SPORTS_MARKET_TYPE_MONEYLINE",
+                headers=headers,
+                timeout=5
+            )
+            print(f"Poly US markets: {r2.text[:2000]}")
         except Exception as e:
             print(f"Poly US debug error: {e}")
 
@@ -206,12 +209,10 @@ def find_arb(kalshi_markets, poly_markets):
 
 def place_kalshi_order(ticker, side, amount, price):
     try:
-        # Safety check — never exceed MAX_BET
         amount = min(amount, MAX_BET)
         path = "/trade-api/v2/portfolio/events/orders"
         headers = get_kalshi_headers("POST", path)
         count = max(1, int(amount / price))
-        # Double check count doesn't exceed budget
         while count * price > MAX_BET and count > 1:
             count -= 1
         payload = {
@@ -242,7 +243,6 @@ def place_kalshi_order(ticker, side, amount, price):
 
 def place_poly_order(market_slug, side, amount):
     try:
-        # Safety check — never exceed MAX_BET
         amount = min(amount, MAX_BET)
         path = "/v1/orders"
         headers = get_poly_headers("POST", path)
@@ -271,11 +271,10 @@ def place_poly_order(market_slug, side, amount):
 
 def execute_trade(opp):
     global session_pnl
-    # Safety: split MAX_BET across both legs, never exceed total
     buy_bet = round(MAX_BET * 0.55, 2)
     fade_bet = round(MAX_BET * 0.45, 2)
 
-    # Always do Polymarket FIRST - never place Kalshi if Poly fails
+    # Always do Polymarket FIRST — never place Kalshi if Poly fails
     if opp["buy_on"] == "Kalshi":
         p_result = place_poly_order(opp["poly_slug"], "no", fade_bet)
         if not p_result:
@@ -289,9 +288,9 @@ def execute_trade(opp):
             return
         k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
-        if not k_result or not p_result:
-            print("⚠️ Orders failed - not counting P&L")
-            return
+    if not k_result:
+        send_telegram("⚠️ HALF TRADE! Poly filled but Kalshi failed - check manually!")
+        return
 
     estimated_profit = round(buy_bet * opp["kalshi_odds"] - MAX_BET, 2)
     session_pnl = round(session_pnl + estimated_profit, 2)
