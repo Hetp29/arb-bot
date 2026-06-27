@@ -17,7 +17,6 @@ MIN_EDGE = 0.05
 STOP_LOSS = 25
 SCAN_INTERVAL = 3
 session_pnl = 0
-traded_markets = set()
 
 def send_telegram(msg):
     if not TELEGRAM_BOT_TOKEN:
@@ -210,11 +209,7 @@ def place_kalshi_order(ticker, side, amount, price):
 def execute_trade(opp):
     global session_pnl, traded_markets
 
-    # Don't trade same market twice
-    market_key = opp["kalshi_ticker"]
-    if market_key in traded_markets:
-        print(f"Already traded {market_key}, skipping")
-        return
+
     
     buy_bet = round(MAX_BET * 0.55, 2)
     fade_bet = round(MAX_BET * 0.45, 2)
@@ -240,8 +235,7 @@ def execute_trade(opp):
         print("⚠️ Kalshi order failed")
         return
 
-    # Mark as traded
-    traded_markets.add(market_key)
+
 
     # Alert for manual Polymarket side
     poly_amount = fade_bet if opp["buy_on"] == "Kalshi" else buy_bet
