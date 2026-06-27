@@ -101,36 +101,21 @@ def get_polymarket_markets():
                 question = market.get("question", "")
                 if any(x in question.lower() for x in ["halftime", "half", "leading", "first", "corner", "score"]):
                     continue
-                
-                # Parse outcomes and prices safely
-                outcomes = market.get("outcomes", [])
                 prices = market.get("outcomePrices", "[]")
                 if isinstance(prices, str):
                     prices = json.loads(prices)
-                if not prices or len(prices) != len(outcomes):
+                if not prices:
                     continue
-                
+                price = float(prices[0])
                 team = market.get("groupItemTitle", "").lower().strip()
-                if not team or "draw" in team:
+                if not team or "draw" in team or price < 0.05 or price > 0.95:
                     continue
-                
-                # CRITICAL FIX: Match the actual team name to the correct price index
-                target_price = None
-                for idx, outcome_name in enumerate(outcomes):
-                    # Checks if the outcome matches the group item title (e.g., "Ghana" or "Yes")
-                    if outcome_name.lower().strip() == team or outcome_name.lower().strip() == "yes":
-                        target_price = float(prices[idx])
-                        break
-                
-                if target_price is None or target_price < 0.05 or target_price > 0.95:
-                    continue
-                    
                 markets.append({
                     "question": question,
                     "team": team,
                     "id": market.get("id", ""),
                     "slug": market.get("slug", ""),
-                    "price": target_price,
+                    "price": price,
                 })
         print(f"Found {len(markets)} Polymarket match markets")
         for m in markets[:5]:
