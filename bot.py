@@ -180,7 +180,6 @@ def find_arb(kalshi_markets, poly_markets):
                     "subtitle": km["subtitle"],
                     "kalshi_ticker": km["ticker"],
                     "poly_id": pm.get("id", ""),
-"poly_id_debug": print(f"Poly ID: {pm.get('id')} slug: {pm.get('slug')}") or pm.get("id", ""),
                     "poly_slug": pm.get("slug", ""),
                     "kalshi_odds": k_odds,
                     "poly_odds": p_odds,
@@ -232,7 +231,7 @@ def place_poly_order(market_id, side, amount):
         headers = get_poly_headers("POST", path)
         intent = "ORDER_INTENT_BUY_LONG" if side == "yes" else "ORDER_INTENT_BUY_SHORT"
         payload = {
-            "marketId": market_id,
+            "marketSlug": market_id,
             "intent": intent,
             "type": "ORDER_TYPE_MARKET",
             "cashOrderQty": {"value": str(amount), "currency": "USD"},
@@ -260,9 +259,9 @@ def execute_trade(opp):
 
     if opp["buy_on"] == "Kalshi":
         k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet, opp["k_price"])
-        p_result = place_poly_order(opp["poly_id"], "no", fade_bet)
+        p_result = place_poly_order(opp["poly_slug"], "no", fade_bet)
     else:
-        p_result = place_poly_order(opp["poly_id"], "yes", buy_bet)
+        p_result = place_poly_order(opp["poly_slug"], "yes", buy_bet)
         k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
     if not k_result or not p_result:
