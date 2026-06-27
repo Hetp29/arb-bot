@@ -29,7 +29,7 @@ def send_telegram(msg):
 # ── KALSHI ────────────────────────────────────────────────
 def get_kalshi_markets():
     try:
-        url = "https://api.elections.kalshi.com/trade-api/v2/events?status=open&series_ticker=KXWORLDSOCCER"
+        url = "https://api.elections.kalshi.com/trade-api/v2/events?status=open&series_ticker=KXWCGAME"
         headers = {
             "Authorization": f"Bearer {KALSHI_API_KEY}",
             "Content-Type": "application/json",
@@ -37,7 +37,6 @@ def get_kalshi_markets():
         }
         r = requests.get(url, headers=headers, timeout=5)
         print(f"Kalshi status: {r.status_code}")
-        print(f"Kalshi response: {r.text[:200]}")
         data = r.json()
         markets = []
         for event in data.get("events", []):
@@ -48,6 +47,7 @@ def get_kalshi_markets():
                     "yes_ask": market.get("yes_ask", 0),
                     "no_ask": market.get("no_ask", 0),
                 })
+        print(f"Found {len(markets)} Kalshi markets")
         return markets
     except Exception as e:
         print(f"Kalshi error: {e}")
