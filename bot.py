@@ -131,7 +131,6 @@ def get_polymarket_markets():
                 team = market.get("groupItemTitle", "").lower().strip()
                 if not team or "draw" in team or price < 0.05 or price > 0.95:
                     continue
-                print(f"Poly slug: {market.get('slug', '')} | team: {team}")
                 markets.append({
                     "question": question,
                     "team": team,
@@ -225,13 +224,13 @@ def place_kalshi_order(ticker, side, amount, price):
         print(f"Kalshi order error: {e}")
         return None
 
-def place_poly_order(market_slug, side, amount):
+def place_poly_order(market_id, side, amount):
     try:
         path = "/v1/orders"
         headers = get_poly_headers("POST", path)
         intent = "ORDER_INTENT_BUY_LONG" if side == "yes" else "ORDER_INTENT_BUY_SHORT"
         payload = {
-            "marketSlug": market_slug,
+            "marketId": market_id,
             "intent": intent,
             "type": "ORDER_TYPE_MARKET",
             "cashOrderQty": {"value": str(amount), "currency": "USD"},
@@ -244,7 +243,7 @@ def place_poly_order(market_slug, side, amount):
         )
         print(f"Poly order: {r.text[:200]}")
         data = r.json()
-        if "error" in str(data).lower():
+        if "error" in str(data).lower() or "code" in str(data):
             print(f"Poly order failed: {data}")
             return None
         return data
@@ -259,12 +258,12 @@ def execute_trade(opp):
 
     if opp["buy_on"] == "Kalshi":
         k_result = place_kalshi_order(opp["kalshi_ticker"], "yes", buy_bet, opp["k_price"])
-        p_result = place_poly_order(opp["poly_slug"], "no", fade_bet)
+        p_result = place_poly_order(opp["poly_id"], "no", fade_bet)
     else:
-        p_result = place_poly_order(opp["poly_slug"], "yes", buy_bet)
+        p_result = place_poly_order(opp["poly_id"], "yes", buy_bet)
         k_result = place_kalshi_order(opp["kalshi_ticker"], "no", fade_bet, opp["k_price"])
 
-    if not k_result or "error" in str(k_result) or not p_result or "code" in str(p_result):
+    if not k_result or not p_result:
         print("⚠️ Orders failed - not counting P&L")
         return
 
